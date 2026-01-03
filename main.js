@@ -3,9 +3,7 @@ import * as webllm from "https://esm.run/@mlc-ai/web-llm";
 /****************************************************************************
  * CONFIGURATION
  ****************************************************************************/
-// We use Llama-3-8B-Instruct (quantized) or Phi-3 as requested.
-// Using a specific commit/quantization from MLC-AI's prebuilt weights.
-const SELECTED_MODEL = "Llama-3-8B-Instruct-q4f32_1-MLC"; 
+const SELECTED_MODEL = "Llama-3-8B-Instruct-q4f32_1-MLC";
 
 // DOM Elements
 const dom = {
@@ -15,10 +13,13 @@ const dom = {
     statusBar: document.getElementById('status-bar'),
     statusText: document.getElementById('status-text'),
     progressBarContainer: document.querySelector('.progress-bar-container'),
-    progressBar: document.getElementById('progress-bar')
+    progressBar: document.getElementById('progress-bar'),
+    dropZone: document.getElementById('drop-zone'),
+    fileInput: document.getElementById('file-input')
 };
 
 let engine = null;
+let vectorStore = []; // To store chunks { id, text, vector }
 
 /****************************************************************************
  * INITIALIZATION
@@ -27,18 +28,13 @@ async function initializeEngine() {
     updateStatus("Initializing WebLLM...", 0);
 
     const initProgressCallback = (report) => {
-        // report has format: { progress: number, text: string }
-        // or just plain text messages in some versions, but recent WebLLM uses object
-        // We'll handle both just in case, but standard is `report.text`
         const label = report.text || report;
-        // console.log("Init:", label);
         updateStatus(label, report.progress || 0);
     };
 
     try {
         updateStatus("Loading Model (this may take a while)...", 0.01);
-        
-        // Create the engine
+
         engine = await webllm.CreateMLCEngine(
             SELECTED_MODEL,
             { initProgressCallback: initProgressCallback }
@@ -56,26 +52,85 @@ async function initializeEngine() {
 }
 
 /****************************************************************************
+ * PDF HANDLING & CHUNKING
+ ****************************************************************************/
+async function handleFile(file) {
+    if (file.type !== 'application/pdf') {
+        alert("Please upload a PDF file.");
+        return;
+    }
+
+    addSystemMessage(`Reading ${file.name}...`);
+    updateStatus("Reading PDF...", 0.1);
+
+    try {
+        const text = await extractTextFromPDF(file);
+        addSystemMessage(`PDF Loaded. Length: ${text.length} characters.`);
+
+        // Chunking
+        const chunks = chunkText(text, 500, 50); // 500 chars, 50 overlap
+
+        // Store chunks (Preparation for Step 4)
+        vectorStore = chunks.map((chunk, index) => ({
+            id: index,
+            text: chunk,
+            vector: null // To be filled in Step 4
+        }));
+
+        console.log("Created Chunks:", vectorStore);
+        addSystemMessage(`Successfully created ${chunks.length} text chunks. (Check Console)`);
+        updateStatus("Ready to chat!", 1);
+
+    } catch (err) {
+        console.error("PDF Error:", err);
+        addSystemMessage("Error reading PDF: " + err.message);
+        updateStatus("Error reading PDF", 0);
+    }
+}
+
+async function extractTextFromPDF(file) {
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = "";
+
+    for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items.map(item => item.str).join(" ");
+        fullText += pageText + "\n";
+
+        // Update progress
+        updateStatus(`Reading PDF (Page ${i}/${pdf.numPages})...`, i / pdf.numPages);
+    }
+
+    return fullText;
+}
+
+function chunkText(text, chunkSize = 500, overlap = 50) {
+    const chunks = [];
+    let start = 0;
+
+    while (start < text.length) {
+        const end = Math.min(start + chunkSize, text.length);
+        chunks.push(text.slice(start, end));
+        start += chunkSize - overlap;
+    }
+
+    return chunks;
+}
+
+/****************************************************************************
  * CHAT LOGIC
  ****************************************************************************/
 async function handleUserMessage() {
     const text = dom.userInput.value.trim();
     if (!text || !engine) return;
 
-    // 1. Add User Message to UI
     addUserMessage(text);
     dom.userInput.value = "";
     enableInput(false);
 
     try {
-        // 2. Prepare conversation (we just send the session history implicit or explicit)
-        // WebLLM engine maintains state if we use the chat completion API correctly or persist messages.
-        // For simple chat, we can just push the new message to a local history array if we wanted manual control,
-        // but engine.chat.completions.create is stateless unless we pass history. 
-        // HOWEVER, `CreateMLCEngine` returns an engine that can hold state if used with `chat.completions`? 
-        // Actually, WebLLM 'engine' is usually stateless request-response unless we manage history.
-        // Wait, `MLCEngine` acts like OpenAI API. We need to maintain history array.
-        
         if (!window.conversationHistory) {
             window.conversationHistory = [
                 { role: "system", content: "You are a helpful academic assistant. Answer questions concisely." }
@@ -84,21 +139,19 @@ async function handleUserMessage() {
 
         window.conversationHistory.push({ role: "user", content: text });
 
-        // 3. Create a placeholder for Bot Message
-        const botMessageId = addBotMessage(""); 
+        const botMessageId = addBotMessage("");
         const botBubble = document.getElementById(botMessageId).querySelector('.bubble');
-        
-        // 4. Stream response
+
         const messages = window.conversationHistory;
-        
+
         const chunks = await engine.chat.completions.create({
             messages,
             stream: true,
-            max_tokens: 512, // Limit response length for speed
+            max_tokens: 512,
         });
 
         let fullReply = "";
-        
+
         for await (const chunk of chunks) {
             const delta = chunk.choices[0]?.delta?.content || "";
             fullReply += delta;
@@ -106,7 +159,6 @@ async function handleUserMessage() {
             dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
         }
 
-        // 5. Update history
         window.conversationHistory.push({ role: "assistant", content: fullReply });
         enableInput(true);
 
@@ -122,8 +174,6 @@ async function handleUserMessage() {
  ****************************************************************************/
 function updateStatus(text, progress = 0) {
     dom.statusText.textContent = text;
-    
-    // Progress is 0.0 to 1.0 (sometimes string check)
     if (progress > 0 && progress < 1) {
         dom.progressBarContainer.classList.remove('hidden');
         dom.progressBar.style.width = `${progress * 100}%`;
@@ -168,11 +218,7 @@ function addBotMessage(initialText) {
 
 function escapeHtml(text) {
     if (!text) return "";
-    return text.replace(/&/g, "&amp;")
-               .replace(/</g, "&lt;")
-               .replace(/>/g, "&gt;")
-               .replace(/"/g, "&quot;")
-               .replace(/'/g, "&#039;");
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
 /****************************************************************************
@@ -181,6 +227,29 @@ function escapeHtml(text) {
 dom.sendBtn.addEventListener('click', handleUserMessage);
 dom.userInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') handleUserMessage();
+});
+
+// Drag & Drop
+dom.dropZone.addEventListener('click', () => dom.fileInput.click());
+dom.fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length > 0) handleFile(e.target.files[0]);
+});
+
+dom.dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dom.dropZone.classList.add('dragover');
+});
+
+dom.dropZone.addEventListener('dragleave', () => {
+    dom.dropZone.classList.remove('dragover');
+});
+
+dom.dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dom.dropZone.classList.remove('dragover');
+    if (e.dataTransfer.files.length > 0) {
+        handleFile(e.dataTransfer.files[0]);
+    }
 });
 
 // Start initialization on load
