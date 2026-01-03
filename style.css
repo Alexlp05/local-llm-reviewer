@@ -22,7 +22,10 @@ body {
     background-color: var(--bg-color);
     color: var(--text-color);
     line-height: 1.6;
+    width: 100vw;
     height: 100vh;
+    margin: 0;
+    overflow: hidden;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -30,11 +33,14 @@ body {
 
 .app-container {
     width: 100%;
-    height: 100vh;
+    height: 100%;
     background: var(--surface-color);
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 header {
@@ -445,10 +451,16 @@ input[type="range"] {
 /* Two-Column Layout */
 .main-layout {
     display: flex;
-    gap: 1.5rem;
+    flex-direction: row;
+    /* Explicit row */
+    width: 100%;
     height: 100%;
+    /* Take remaining height */
     overflow: hidden;
     padding: 0;
+    margin: 0;
+    gap: 0;
+    /* Remove gap if we want full split, or keep small gap. User wants "Use all space". Let's keep small gap or 0. */
 }
 
 /* Ensure Chat Container takes full height of interface */
@@ -457,15 +469,18 @@ input[type="range"] {
 }
 
 .sidebar {
-    width: 320px;
-    /* Fixed width sidebar */
+    width: 350px;
+    /* Slightly wider sidebar */
     display: flex;
     flex-direction: column;
     gap: 1rem;
     flex-shrink: 0;
     overflow-y: auto;
-    padding-right: 0.5rem;
-    /* Space for scrollbar */
+    padding: 1.5rem;
+    /* Add internal padding */
+    background: rgba(0, 0, 0, 0.2);
+    /* Slight visual separation */
+    border-left: 1px solid var(--border-color);
 }
 
 .chat-interface {
@@ -473,7 +488,9 @@ input[type="range"] {
     display: flex;
     flex-direction: column;
     min-width: 0;
-    /* Prevent flex overflow */
+    padding: 1.5rem;
+    /* Add internal padding */
+    position: relative;
 }
 
 /* Adjust Settings Panel to fit sidebar */
