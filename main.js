@@ -38,16 +38,13 @@ async function initializeEngine() {
     try {
         // Load WebLLM
         updateStatus("Loading Chat Model (WebLLM)...", 0.01);
-
         engine = await webllm.CreateMLCEngine(
             SELECTED_MODEL,
             { initProgressCallback: initProgressCallback }
         );
 
         // Load Transformers.js Embedding Model
-        // We do this in parallel or sequence. Sequence is safer for memory.
         updateStatus("Loading Embedding Model (Transformers.js)...", 0.5);
-        // env.allowLocalModels = false; // Ensure we fetch from Hub
         extractor = await pipeline('feature-extraction', EMBEDDING_MODEL);
 
         updateStatus("Ready to chat!", 1);
@@ -94,7 +91,7 @@ async function handleFile(file) {
         await embedChunks();
 
         console.log("Vector Store:", vectorStore);
-        addSystemMessage(`Embeddings generated for ${vectorStore.length} chunks. Memory Ready.`);
+        addSystemMessage(`Embeddings generated for ${vectorStore.length} chunks. RAG Ready.`);
         updateStatus("Ready to chat!", 1);
 
     } catch (err) {
@@ -110,16 +107,12 @@ async function embedChunks() {
         return;
     }
 
-    // Process in batches to avoid freezing UI
     const total = vectorStore.length;
     for (let i = 0; i < total; i++) {
         const chunk = vectorStore[i];
-
-        // Transformers.js output is a Tensor. .data is the Float32Array
         const output = await extractor(chunk.text, { pooling: 'mean', normalize: true });
         chunk.vector = Array.from(output.data);
 
-        // Update progress every 10 chunks or so
         if (i % 10 === 0) {
             updateStatus(`Embedding Chunks (${i + 1}/${total})...`, (i + 1) / total);
         }
@@ -136,29 +129,24 @@ async function extractTextFromPDF(file) {
         const textContent = await page.getTextContent();
         const pageText = textContent.items.map(item => item.str).join(" ");
         fullText += pageText + "\n";
-
-        // Update progress
         updateStatus(`Reading PDF (Page ${i}/${pdf.numPages})...`, i / pdf.numPages);
     }
-
     return fullText;
 }
 
 function chunkText(text, chunkSize = 500, overlap = 50) {
     const chunks = [];
     let start = 0;
-
     while (start < text.length) {
         const end = Math.min(start + chunkSize, text.length);
         chunks.push(text.slice(start, end));
         start += chunkSize - overlap;
     }
-
     return chunks;
 }
 
 /****************************************************************************
- * CHAT LOGIC
+ * RAG ENGINE & CHAT LOGIC
  ****************************************************************************/
 async function handleUserMessage() {
     const text = dom.userInput.value.trim();
@@ -169,27 +157,71 @@ async function handleUserMessage() {
     enableInput(false);
 
     try {
-        if (!window.conversationHistory) {
-            window.conversationHistory = [
-                { role: "system", content: "You are a helpful academic assistant. Answer questions concisely." }
-            ];
+        let systemPrompt = "You are a helpful academic assistant. Answer questions concisely based on the context provided.";
+        let relevantContext = "";
+
+        // RAG STEP: If we have documents, find relevant chunks
+        if (vectorStore.length > 0 && extractor) {
+            addSystemMessage("Searching documents...");
+
+            // 1. Embed Query
+            const output = await extractor(text, { pooling: 'mean', normalize: true });
+            const queryVector = Array.from(output.data);
+
+            // 2. Cosine Similarity Search
+            const similarities = vectorStore.map(chunk => ({
+                ...chunk,
+                score: cosineSimilarity(queryVector, chunk.vector)
+            }));
+
+            // 3. Sort & Top-K
+            similarities.sort((a, b) => b.score - a.score);
+            const topK = similarities.slice(0, 3); // Top 3 chunks
+
+            // 4. Construct Context
+            relevantContext = topK.map(chunk => `[Context]: ${chunk.text}`).join("\n\n");
+            console.log("RAG Context:", topK);
+
+            systemPrompt += "\n\nCONTEXT:\n" + relevantContext;
         }
 
-        window.conversationHistory.push({ role: "user", content: text });
+        // WebLLM logic
+        if (!window.conversationHistory) {
+            window.conversationHistory = [];
+        }
 
+        // We rebuild messages every time to ensure System Prompt includes latest RAG context if needed,
+        // BUT WebLLM session handling usually appends. 
+        // Strategy: Just append the user message, but if we did RAG, we might prepend context to the USER message 
+        // OR update the system prompt. Llama-3 handles system prompts well.
+        // Let's UPDATE the system prompt for THIS turn? Hard with simple history array.
+        // Best approach for single-turn RAG chat: 
+        // Send: System (with context) + User Query.
+
+        // For multi-turn, we'll just inject context into the User message for simplicity and effectiveness.
+        // "Context: ... \n\n Question: ..."
+
+        const finalUserMessage = relevantContext
+            ? `Context:\n${relevantContext}\n\nQuestion: ${text}`
+            : text;
+
+        const messages = [
+            { role: "system", content: "You are a helpful academic assistant." },
+            ...window.conversationHistory, // Past history
+            { role: "user", content: finalUserMessage }
+        ];
+
+        // Stream response
         const botMessageId = addBotMessage("");
         const botBubble = document.getElementById(botMessageId).querySelector('.bubble');
-
-        const messages = window.conversationHistory;
 
         const chunks = await engine.chat.completions.create({
             messages,
             stream: true,
-            max_tokens: 512,
+            max_tokens: 1024,
         });
 
         let fullReply = "";
-
         for await (const chunk of chunks) {
             const delta = chunk.choices[0]?.delta?.content || "";
             fullReply += delta;
@@ -197,7 +229,13 @@ async function handleUserMessage() {
             dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
         }
 
+        // Update history (We store the ORIGINAL user text to keep history clean/readable, 
+        // or the RAG version? Storing original is better for UI, but model needs context.
+        // Let's store original text but the model saw the hidden context.)
+        // Actually, simple way: Store what we sent.
+        window.conversationHistory.push({ role: "user", content: finalUserMessage });
         window.conversationHistory.push({ role: "assistant", content: fullReply });
+
         enableInput(true);
 
     } catch (err) {
@@ -207,8 +245,21 @@ async function handleUserMessage() {
     }
 }
 
+function cosineSimilarity(vecA, vecB) {
+    if (!vecA || !vecB) return 0;
+    let dot = 0;
+    let normA = 0;
+    let normB = 0;
+    for (let i = 0; i < vecA.length; i++) {
+        dot += vecA[i] * vecB[i];
+        normA += vecA[i] * vecA[i];
+        normB += vecB[i] * vecB[i];
+    }
+    return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
 /****************************************************************************
- * UI HELPERS
+ * UI HELPERS & EVENTS
  ****************************************************************************/
 function updateStatus(text, progress = 0) {
     dom.statusText.textContent = text;
@@ -224,7 +275,8 @@ function updateStatus(text, progress = 0) {
 function enableInput(enabled) {
     dom.userInput.disabled = !enabled;
     dom.sendBtn.disabled = !enabled;
-    if (enabled) dom.userInput.focus();
+    // Don't focus if disabled, only if re-enabled
+    if (enabled) setTimeout(() => dom.userInput.focus(), 100);
 }
 
 function addSystemMessage(text) {
@@ -259,29 +311,22 @@ function escapeHtml(text) {
     return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 
-/****************************************************************************
- * EVENT LISTENERS
- ****************************************************************************/
+/* Event Listeners */
 dom.sendBtn.addEventListener('click', handleUserMessage);
 dom.userInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') handleUserMessage();
 });
-
-// Drag & Drop
 dom.dropZone.addEventListener('click', () => dom.fileInput.click());
 dom.fileInput.addEventListener('change', (e) => {
     if (e.target.files.length > 0) handleFile(e.target.files[0]);
 });
-
 dom.dropZone.addEventListener('dragover', (e) => {
     e.preventDefault();
     dom.dropZone.classList.add('dragover');
 });
-
 dom.dropZone.addEventListener('dragleave', () => {
     dom.dropZone.classList.remove('dragover');
 });
-
 dom.dropZone.addEventListener('drop', (e) => {
     e.preventDefault();
     dom.dropZone.classList.remove('dragover');
@@ -290,7 +335,7 @@ dom.dropZone.addEventListener('drop', (e) => {
     }
 });
 
-// Start initialization on load
+// Start
 window.addEventListener('DOMContentLoaded', () => {
     initializeEngine();
 });
