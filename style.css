@@ -43,25 +43,32 @@ body {
     box-shadow: none;
 }
 
-header {
-    padding: 1.5rem;
+/* Compact Header */
+.compact-header {
+    height: 50px;
+    /* Strict minimum height */
+    padding: 0 1.5rem;
     border-bottom: 1px solid var(--border-color);
-    text-align: center;
-    background: rgba(30, 41, 59, 0.8);
-    backdrop-filter: blur(10px);
+    background: var(--surface-color);
     display: flex;
-    flex-direction: column;
+    justify-content: space-between;
     align-items: center;
-    gap: 0.5rem;
+    flex-shrink: 0;
 }
 
-h1 {
-    font-size: 1.75rem;
+.compact-header h1 {
+    font-size: 1.1rem;
     font-weight: 700;
+    margin: 0;
     background: var(--accent-gradient);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
-    margin-bottom: 0.25rem;
+}
+
+.header-right {
+    display: flex;
+    align-items: center;
+    font-size: 0.8rem;
 }
 
 .subtitle {
