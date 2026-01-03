@@ -19,13 +19,19 @@ The table below maps the theoretical components found in the provided Python scr
 ## Project Roadmap
 
 - [x] **Step 1: Infrastructure & Theory**: Setup Repo, HTML/CSS, and Theory comparison.
-- [ ] **Step 2: The Brain**: WebLLM integration for local Chat.
-- [ ] **Step 3: The Eyes**: PDF parsing and Chunking.
-- [ ] **Step 4: The Memory**: Embedding generation with Transformers.js.
-- [ ] **Step 5: The Reasoning**: RAG engine (Vector Search + System Prompt).
-- [ ] **Step 6: Bonus**: TTS and UI Polish.
+- [x] **Step 2: The Brain**: WebLLM integration for local Chat.
+- [x] **Step 3: The Eyes**: PDF parsing and Chunking.
+- [x] **Step 4: The Memory**: Embedding generation with Transformers.js.
+- [x] **Step 5: The Reasoning**: RAG engine (Vector Search + System Prompt).
+- [x] **Step 6: Bonus**: TTS, Dark Mode, Voice Input (STT), Citation UI.
 
 ## Getting Started
 
 1. Open `index.html` in a modern browser (Chrome/Edge/Brave).
 2. Ensure you have a GPU compatible with WebGPU.
+
+## Features (Phase 2 Upgrade)
+
+- **System Controls**: Adjust Temperature and System Prompts in real-time.
+- **Citation Badges**: See exactly which PDF source was used for the answer.
+- **Voice Mode**: Speak to the agent using the Microphone button (Whisper-tiny model).

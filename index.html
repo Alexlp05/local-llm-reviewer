@@ -33,10 +33,29 @@
         </header>
 
         <main>
+            <!-- STEP 6: Controls & Settings -->
+            <div class="controls-container">
+                <details class="settings-panel">
+                    <summary>⚙️ System Settings</summary>
+                    <div class="settings-content">
+                        <label>
+                            <span>System Prompt:</span>
+                            <textarea id="system-prompt"
+                                rows="3">You are a helpful academic assistant. Answer questions concisely based on the context provided.</textarea>
+                        </label>
+                        <label>
+                            <span>Temperature: <span id="temp-value">0.7</span></span>
+                            <input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7">
+                        </label>
+                    </div>
+                </details>
+            </div>
+
             <!-- STEP 3: Drop Zone -->
             <div id="drop-zone" class="drop-zone">
                 <p>📄 Drag & Drop Research Paper (PDF)</p>
                 <input type="file" id="file-input" accept="application/pdf" style="display: none;">
+                <div id="document-status" class="doc-status"></div>
             </div>
 
             <!-- STEP 2: Chat Interface -->
@@ -48,6 +67,7 @@
                 </div>
 
                 <div class="input-area">
+                    <button id="mic-btn" class="icon-btn" title="Speak">🎤</button>
                     <input type="text" id="user-input" placeholder="Ask a question about your documents..." disabled>
                     <button id="send-btn" disabled>→</button>
                 </div>

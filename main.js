@@ -18,13 +18,22 @@ const dom = {
     progressBar: document.getElementById('progress-bar'),
     dropZone: document.getElementById('drop-zone'),
     fileInput: document.getElementById('file-input'),
-    ttsToggle: document.getElementById('tts-toggle')
+    ttsToggle: document.getElementById('tts-toggle'),
+    systemPrompt: document.getElementById('system-prompt'),
+    tempSlider: document.getElementById('temp-slider'),
+    tempValue: document.getElementById('temp-value'),
+    docStatus: document.getElementById('document-status'),
+    micBtn: document.getElementById('mic-btn')
 };
 
 let engine = null;
 let extractor = null; // Transformers.js pipeline
+let transcriber = null; // Whisper pipeline
 let vectorStore = []; // To store chunks { id, text, vector }
 const synth = window.speechSynthesis;
+let isRecording = false;
+let mediaRecorder = null;
+let audioChunks = [];
 
 /****************************************************************************
  * INITIALIZATION
@@ -85,8 +94,12 @@ async function handleFile(file) {
         vectorStore = chunks.map((chunk, index) => ({
             id: index,
             text: chunk,
-            vector: null
+            vector: null,
+            source: file.name
         }));
+
+        dom.docStatus.textContent = `File Loaded: ${file.name} (${chunks.length} chunks)`;
+
 
         addSystemMessage(`Created ${chunks.length} chunks. Generating Embeddings...`);
         updateStatus("Generating Embeddings...", 0.2);
@@ -150,6 +163,95 @@ function chunkText(text, chunkSize = 500, overlap = 50) {
 }
 
 /****************************************************************************
+ * SPEECH TO TEXT (WHISPER)
+ ****************************************************************************/
+async function toggleRecording() {
+    if (isRecording) {
+        stopRecording();
+    } else {
+        startRecording();
+    }
+}
+
+async function startRecording() {
+    if (!navigator.mediaDevices) {
+        alert("Microphone not supported.");
+        return;
+    }
+
+    try {
+        // Load transcriber on first use
+        if (!transcriber) {
+            updateStatus("Loading Whisper Model...", 0.5);
+            addSystemMessage("Loading Whisper (STT)...");
+            transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en');
+            addSystemMessage("Whisper Loaded.");
+            updateStatus("Ready to Record", 1);
+        }
+
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (e) => {
+            if (e.data.size > 0) audioChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = async () => {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+            await transcribeAudio(audioBlob);
+
+            // Cleanup stream tracks
+            stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+        dom.micBtn.classList.add('recording');
+        updateStatus("Listening...", 1);
+
+    } catch (err) {
+        console.error("Mic Error:", err);
+        addSystemMessage("Mic Error: " + err.message);
+    }
+}
+
+function stopRecording() {
+    if (mediaRecorder && isRecording) {
+        mediaRecorder.stop();
+        isRecording = false;
+        dom.micBtn.classList.remove('recording');
+        updateStatus("Processing Audio...", 1);
+    }
+}
+
+async function transcribeAudio(audioBlob) {
+    if (!transcriber) return;
+
+    try {
+        // Convert Blob to URL
+        const url = URL.createObjectURL(audioBlob);
+
+        // Transcribe
+        // Transformers.js handles URL or AudioContext. Let's try passing the URL directly.
+        // Note: Transformers.js usually expects float32 array or URL.
+        const output = await transcriber(url);
+
+        const text = output.text;
+        if (text) {
+            dom.userInput.value = text.trim();
+            handleUserMessage(); // Auto-send
+        }
+
+    } catch (err) {
+        console.error("Transcribe Error:", err);
+        addSystemMessage("STT Error: " + err.message);
+    }
+    updateStatus("Ready to chat!", 1);
+}
+
+
+/****************************************************************************
  * RAG ENGINE & CHAT LOGIC
  ****************************************************************************/
 async function handleUserMessage() {
@@ -161,7 +263,7 @@ async function handleUserMessage() {
     enableInput(false);
 
     try {
-        let systemPrompt = "You are a helpful academic assistant. Answer questions concisely based on the context provided.";
+        let systemPrompt = dom.systemPrompt.value;
         let relevantContext = "";
 
         // RAG STEP: If we have documents, find relevant chunks
@@ -222,6 +324,7 @@ async function handleUserMessage() {
         const chunks = await engine.chat.completions.create({
             messages,
             stream: true,
+            temperature: parseFloat(dom.tempSlider.value),
             max_tokens: 1024,
         });
 
@@ -230,6 +333,17 @@ async function handleUserMessage() {
             const delta = chunk.choices[0]?.delta?.content || "";
             fullReply += delta;
             botBubble.textContent = fullReply;
+            dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
+        }
+
+        // Generate Citations Badge
+        if (relevantContext) {
+            const uniqueSources = [...new Set(topK.map(k => k.source))];
+            const sourcesHtml = uniqueSources.map(s => `<span class="citation">source: ${s}</span>`).join('');
+            const citationDiv = document.createElement('div');
+            citationDiv.innerHTML = sourcesHtml;
+            // Append badges to the LAST bot message (which is the one we just filled)
+            dom.chatBox.lastElementChild.appendChild(citationDiv);
             dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
         }
 
@@ -356,6 +470,12 @@ dom.dropZone.addEventListener('drop', (e) => {
         handleFile(e.dataTransfer.files[0]);
     }
 });
+
+// Settings Controls
+dom.tempSlider.addEventListener('input', (e) => {
+    dom.tempValue.textContent = e.target.value;
+});
+dom.micBtn.addEventListener('click', toggleRecording);
 
 // Start
 window.addEventListener('DOMContentLoaded', () => {

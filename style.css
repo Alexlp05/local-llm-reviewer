@@ -329,3 +329,119 @@ button:disabled {
 ::-webkit-scrollbar-thumb:hover {
     background: var(--text-muted);
 }
+
+/* Settings Panel */
+.controls-container {
+    margin-bottom: 1rem;
+}
+
+.settings-panel {
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--surface-color);
+    overflow: hidden;
+}
+
+.settings-panel summary {
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    font-weight: 500;
+    list-style: none;
+    /* Hide default triangle */
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.settings-panel summary:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.settings-content {
+    padding: 1rem;
+    border-top: 1px solid var(--border-color);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.settings-content label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+}
+
+textarea {
+    background: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 0.5rem;
+    color: var(--text-color);
+    font-family: inherit;
+    resize: vertical;
+}
+
+input[type="range"] {
+    width: 100%;
+}
+
+/* Icon Buttons (Mic) */
+.icon-btn {
+    padding: 0 1rem;
+    background: var(--surface-color);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    font-size: 1.25rem;
+}
+
+.icon-btn:hover {
+    background: var(--border-color);
+}
+
+.icon-btn.recording {
+    background: #ef4444;
+    /* Red */
+    border-color: #ef4444;
+    color: white;
+    animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+
+    100% {
+        opacity: 1;
+    }
+}
+
+/* Source Badges */
+.citation {
+    display: inline-block;
+    font-size: 0.75rem;
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    margin-right: 0.25rem;
+    margin-top: 0.5rem;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.citation:hover {
+    background: rgba(59, 130, 246, 0.3);
+}
+
+/* Document Status */
+.doc-status {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    color: var(--primary-color);
+}
