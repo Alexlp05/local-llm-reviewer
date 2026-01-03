@@ -265,6 +265,7 @@ async function handleUserMessage() {
     try {
         let systemPrompt = dom.systemPrompt.value;
         let relevantContext = "";
+        let topK = [];
 
         // RAG STEP: If we have documents, find relevant chunks
         if (vectorStore.length > 0 && extractor) {
@@ -282,7 +283,7 @@ async function handleUserMessage() {
 
             // 3. Sort & Top-K
             similarities.sort((a, b) => b.score - a.score);
-            const topK = similarities.slice(0, 3); // Top 3 chunks
+            topK = similarities.slice(0, 3); // Top 3 chunks
 
             // 4. Construct Context
             relevantContext = topK.map(chunk => `[Context]: ${chunk.text}`).join("\n\n");
