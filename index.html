@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Local LLM Literature Reviewer</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+    <div class="app-container">
+        <header>
+            <h1>Local LLM Literature Reviewer</h1>
+            <p class="subtitle">100% Privacy • WebGPU • RAG</p>
+        </header>
+
+        <main>
+            <!-- STEP 3: Drop Zone -->
+            <div id="drop-zone" class="hidden">
+                <p>📄 Drag & Drop Research Paper (PDF)</p>
+                <input type="file" id="file-input" accept="application/pdf" style="display: none;">
+            </div>
+
+            <!-- STEP 2: Chat Interface -->
+            <div class="chat-container">
+                <div id="chat-box" class="chat-box">
+                    <div class="message system">
+                        <div class="bubble">System initializing... Waiting for WebLLM.</div>
+                    </div>
+                </div>
+                
+                <div class="input-area">
+                    <input type="text" id="user-input" placeholder="Ask a question about your documents..." disabled>
+                    <button id="send-btn" disabled>→</button>
+                </div>
+            </div>
+
+            <!-- Status / Progress -->
+            <div id="status-bar" class="status-bar">
+                <span id="status-text">Ready to initialize</span>
+                <div class="progress-bar-container hidden">
+                    <div id="progress-bar" class="progress-bar"></div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modules are loaded here in later steps -->
+    <!-- <script type="module" src="main.js"></script> -->
+</body>
+</html>
