@@ -17,16 +17,20 @@ const dom = {
     progressBarContainer: document.querySelector('.progress-bar-container'),
     progressBar: document.getElementById('progress-bar'),
     dropZone: document.getElementById('drop-zone'),
-    fileInput: document.getElementById('file-input')
+    fileInput: document.getElementById('file-input'),
+    ttsToggle: document.getElementById('tts-toggle')
 };
 
 let engine = null;
 let extractor = null; // Transformers.js pipeline
 let vectorStore = []; // To store chunks { id, text, vector }
+const synth = window.speechSynthesis;
 
 /****************************************************************************
  * INITIALIZATION
  ****************************************************************************/
+
+
 async function initializeEngine() {
     updateStatus("Initializing WebLLM...", 0);
 
@@ -236,6 +240,11 @@ async function handleUserMessage() {
         window.conversationHistory.push({ role: "user", content: finalUserMessage });
         window.conversationHistory.push({ role: "assistant", content: fullReply });
 
+        // Bonus: TTS
+        if (dom.ttsToggle.checked) {
+            speakText(fullReply);
+        }
+
         enableInput(true);
 
     } catch (err) {
@@ -304,6 +313,19 @@ function addBotMessage(initialText) {
     dom.chatBox.appendChild(div);
     dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
     return id;
+}
+
+function speakText(text) {
+    if (!text) return;
+    if (synth.speaking) {
+        synth.cancel();
+    }
+    const utterThis = new SpeechSynthesisUtterance(text);
+    // Simple voice selection
+    const voices = synth.getVoices();
+    const enVoice = voices.find(v => v.name.includes("Google US English")) || voices.find(v => v.lang.startsWith("en"));
+    if (enVoice) utterThis.voice = enVoice;
+    synth.speak(utterThis);
 }
 
 function escapeHtml(text) {
