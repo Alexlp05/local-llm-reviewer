@@ -1,9 +1,11 @@
 import * as webllm from "https://esm.run/@mlc-ai/web-llm";
+import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2";
 
 /****************************************************************************
  * CONFIGURATION
  ****************************************************************************/
 const SELECTED_MODEL = "Llama-3-8B-Instruct-q4f32_1-MLC";
+const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 
 // DOM Elements
 const dom = {
@@ -19,6 +21,7 @@ const dom = {
 };
 
 let engine = null;
+let extractor = null; // Transformers.js pipeline
 let vectorStore = []; // To store chunks { id, text, vector }
 
 /****************************************************************************
@@ -33,20 +36,27 @@ async function initializeEngine() {
     };
 
     try {
-        updateStatus("Loading Model (this may take a while)...", 0.01);
+        // Load WebLLM
+        updateStatus("Loading Chat Model (WebLLM)...", 0.01);
 
         engine = await webllm.CreateMLCEngine(
             SELECTED_MODEL,
             { initProgressCallback: initProgressCallback }
         );
 
+        // Load Transformers.js Embedding Model
+        // We do this in parallel or sequence. Sequence is safer for memory.
+        updateStatus("Loading Embedding Model (Transformers.js)...", 0.5);
+        // env.allowLocalModels = false; // Ensure we fetch from Hub
+        extractor = await pipeline('feature-extraction', EMBEDDING_MODEL);
+
         updateStatus("Ready to chat!", 1);
         enableInput(true);
-        addSystemMessage("Model loaded successfully. Say hello!");
+        addSystemMessage("Model & Embedder loaded. Ready!");
 
     } catch (err) {
         console.error("Initialization error:", err);
-        updateStatus("Error loading model: " + err.message, 0);
+        updateStatus("Error loading models: " + err.message, 0);
         addSystemMessage("Error: " + err.message);
     }
 }
@@ -70,21 +80,49 @@ async function handleFile(file) {
         // Chunking
         const chunks = chunkText(text, 500, 50); // 500 chars, 50 overlap
 
-        // Store chunks (Preparation for Step 4)
+        // Store chunks
         vectorStore = chunks.map((chunk, index) => ({
             id: index,
             text: chunk,
-            vector: null // To be filled in Step 4
+            vector: null
         }));
 
-        console.log("Created Chunks:", vectorStore);
-        addSystemMessage(`Successfully created ${chunks.length} text chunks. (Check Console)`);
+        addSystemMessage(`Created ${chunks.length} chunks. Generating Embeddings...`);
+        updateStatus("Generating Embeddings...", 0.2);
+
+        // Generate Embeddings
+        await embedChunks();
+
+        console.log("Vector Store:", vectorStore);
+        addSystemMessage(`Embeddings generated for ${vectorStore.length} chunks. Memory Ready.`);
         updateStatus("Ready to chat!", 1);
 
     } catch (err) {
         console.error("PDF Error:", err);
         addSystemMessage("Error reading PDF: " + err.message);
         updateStatus("Error reading PDF", 0);
+    }
+}
+
+async function embedChunks() {
+    if (!extractor) {
+        addSystemMessage("Embedding model not loaded yet.");
+        return;
+    }
+
+    // Process in batches to avoid freezing UI
+    const total = vectorStore.length;
+    for (let i = 0; i < total; i++) {
+        const chunk = vectorStore[i];
+
+        // Transformers.js output is a Tensor. .data is the Float32Array
+        const output = await extractor(chunk.text, { pooling: 'mean', normalize: true });
+        chunk.vector = Array.from(output.data);
+
+        // Update progress every 10 chunks or so
+        if (i % 10 === 0) {
+            updateStatus(`Embedding Chunks (${i + 1}/${total})...`, (i + 1) / total);
+        }
     }
 }
 
