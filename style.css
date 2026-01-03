@@ -445,3 +445,69 @@ input[type="range"] {
     font-size: 0.8rem;
     color: var(--primary-color);
 }
+
+/* Two-Column Layout */
+.main-layout {
+    display: flex;
+    gap: 1.5rem;
+    height: 100%;
+    overflow: hidden;
+    padding: 0;
+}
+
+/* Ensure Chat Container takes full height of interface */
+.chat-container {
+    height: 100%;
+}
+
+.sidebar {
+    width: 320px;
+    /* Fixed width sidebar */
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    flex-shrink: 0;
+    overflow-y: auto;
+    padding-right: 0.5rem;
+    /* Space for scrollbar */
+}
+
+.chat-interface {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    /* Prevent flex overflow */
+}
+
+/* Adjust Settings Panel to fit sidebar */
+.settings-panel textarea {
+    min-height: 120px;
+}
+
+/* Responsive: Stack on mobile */
+@media (max-width: 768px) {
+    .main-layout {
+        flex-direction: column;
+        overflow-y: auto;
+    }
+
+    .sidebar {
+        width: 100%;
+        height: auto;
+        overflow: visible;
+        margin-bottom: 1rem;
+    }
+
+    .chat-interface {
+        height: 60vh;
+        /* Fixed height on mobile */
+        flex: none;
+    }
+
+    .app-container {
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
+    }
+}
