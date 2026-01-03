@@ -33,7 +33,33 @@
         </header>
 
         <main class="main-layout">
-            <!-- SIDEBAR: Settings & Files -->
+            <!-- MAIN: Chat Interface (Left) -->
+            <section class="chat-interface">
+                <div class="chat-container">
+                    <div id="chat-box" class="chat-box">
+                        <div class="message system">
+                            <div class="bubble">System initializing... Waiting for WebLLM.</div>
+                        </div>
+                    </div>
+
+                    <div class="input-area">
+                        <button id="mic-btn" class="icon-btn" title="Speak">🎤</button>
+                        <input type="text" id="user-input" placeholder="Ask a question about your documents..."
+                            disabled>
+                        <button id="send-btn" disabled>→</button>
+                    </div>
+                </div>
+
+                <!-- Status / Progress (Inside Chat Column) -->
+                <div id="status-bar" class="status-bar">
+                    <span id="status-text">Ready to initialize</span>
+                    <div class="progress-bar-container hidden">
+                        <div id="progress-bar" class="progress-bar"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- SIDEBAR: Settings & Files (Right) -->
             <aside class="sidebar">
                 <!-- Drop Zone -->
                 <div id="drop-zone" class="drop-zone">
@@ -60,32 +86,6 @@
                     </details>
                 </div>
             </aside>
-
-            <!-- MAIN: Chat Interface -->
-            <section class="chat-interface">
-                <div class="chat-container">
-                    <div id="chat-box" class="chat-box">
-                        <div class="message system">
-                            <div class="bubble">System initializing... Waiting for WebLLM.</div>
-                        </div>
-                    </div>
-
-                    <div class="input-area">
-                        <button id="mic-btn" class="icon-btn" title="Speak">🎤</button>
-                        <input type="text" id="user-input" placeholder="Ask a question about your documents..."
-                            disabled>
-                        <button id="send-btn" disabled>→</button>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Status / Progress -->
-            <div id="status-bar" class="status-bar">
-                <span id="status-text">Ready to initialize</span>
-                <div class="progress-bar-container hidden">
-                    <div id="progress-bar" class="progress-bar"></div>
-                </div>
-            </div>
         </main>
     </div>
 
