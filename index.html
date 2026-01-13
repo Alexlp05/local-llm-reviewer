@@ -5,92 +5,531 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Local LLM Literature Reviewer</title>
-    <link rel="stylesheet" href="style.css">
+    <!-- Markdown Support -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: '#3b82f6',
+                        secondary: '#1e293b',
+                        dark: '#0f172a',
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <!-- PDF.js Legacy for wider compatibility or modern -->
+    <!-- PDF.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     </script>
+    <style>
+        /* Minimal custom overrides */
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+
+        @keyframes pulse-red {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        .recording-pulse {
+            animation: pulse-red 1.5s infinite;
+            background-color: #ef4444 !important;
+            border-color: #ef4444 !important;
+            color: white !important;
+        }
+
+        /* 
+           Thread View Styles 
+           We use raw CSS for the dynamic JS elements to keep main.js clean 
+        */
+
+        /* Common Message Container */
+        .message-row {
+            display: flex;
+            gap: 1.5rem;
+            /* Space between avatar and text */
+            padding: 1.5rem;
+            border-bottom: 1px solid rgba(51, 65, 85, 0.4);
+            /* subtle separator */
+            animation: fadeIn 0.3s forwards;
+        }
+
+        /* User Row Background (Optional: Slightly brighter or just distinct) */
+        .message-row.user {
+            background-color: transparent;
+        }
+
+        /* Bot Row Background - Slightly lighter to distinguish "turn" */
+        .message-row.bot {
+            background-color: rgba(30, 41, 59, 0.4);
+            /* slate-800/40 */
+        }
+
+        /* Avatars */
+        .avatar {
+            width: 2rem;
+            height: 2rem;
+            border-radius: 0.375rem;
+            /* rounded-md */
+            flex-shrink: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.25rem;
+        }
+
+        .avatar.user {
+            background-color: #3b82f6;
+            color: white;
+        }
+
+        /* Blue */
+        .avatar.bot {
+            background-color: #10b981;
+            color: white;
+        }
+
+        /* Emerald */
+        .avatar.system {
+            background-color: #64748b;
+            color: white;
+            font-size: 1rem;
+        }
+
+        /* Content Area */
+        .message-content {
+            flex: 1;
+            min-width: 0;
+            /* Enable text wrapping in flex */
+            font-size: 1rem;
+            line-height: 1.7;
+            color: #e2e8f0;
+            /* slate-200 */
+        }
+
+        /* Markdown Typography Overrides (Simple Prose) */
+        .message-content h1,
+        .message-content h2,
+        .message-content h3 {
+            font-weight: 700;
+            margin-top: 1.5rem;
+            margin-bottom: 0.75rem;
+            color: white;
+        }
+
+        .message-content h1 {
+            font-size: 1.5rem;
+        }
+
+        .message-content h2 {
+            font-size: 1.25rem;
+        }
+
+        .message-content p {
+            margin-bottom: 0.75rem;
+        }
+
+        .message-content ul,
+        .message-content ol {
+            margin-bottom: 0.75rem;
+            padding-left: 1.5rem;
+        }
+
+        .message-content ul {
+            list-style-type: disc;
+        }
+
+        .message-content ol {
+            list-style-type: decimal;
+        }
+
+        .message-content li {
+            margin-bottom: 0.25rem;
+        }
+
+        .message-content strong {
+            color: white;
+            font-weight: 600;
+        }
+
+        .message-content code {
+            background-color: #1e293b;
+            /* slate-800 */
+            padding: 0.2rem 0.4rem;
+            border-radius: 0.25rem;
+            font-family: monospace;
+            font-size: 0.875rem;
+            color: #fca5a5;
+            /* red-300 */
+        }
+
+        .message-content pre {
+            background-color: #0f172a;
+            /* slate-900 */
+            padding: 1rem;
+            border-radius: 0.5rem;
+            overflow-x: auto;
+            margin-bottom: 1rem;
+            border: 1px solid #334155;
+        }
+
+        .message-content pre code {
+            background-color: transparent;
+            padding: 0;
+            color: #cbd5e1;
+            border-radius: 0;
+        }
+
+        .message-content blockquote {
+            border-left: 4px solid #3b82f6;
+            padding-left: 1rem;
+            color: #94a3b8;
+            font-style: italic;
+            margin-bottom: 1rem;
+        }
+
+        /* Citations */
+        .citation-badge {
+            display: inline-flex;
+            align-items: center;
+            font-size: 0.75rem;
+            background-color: rgba(59, 130, 246, 0.1);
+            color: #60a5fa;
+            padding: 0.125rem 0.5rem;
+            border-radius: 9999px;
+            margin-top: 0.5rem;
+            margin-right: 0.5rem;
+            border: 1px solid rgba(59, 130, 246, 0.2);
+            font-weight: 500;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(5px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+    </style>
 </head>
 
-<body>
+<body class="bg-slate-900 text-slate-100 h-screen w-screen overflow-hidden flex flex-col">
 
-    <div class="app-container">
-        <header>
-            <h1>Local LLM Literature Reviewer</h1>
-            <p class="subtitle">100% Privacy • WebGPU • RAG</p>
-            <div class="controls">
-                <label class="toggle-switch">
-                    <input type="checkbox" id="tts-toggle">
-                    <span class="slider"></span>
-                    <span class="label-text">🔊 Read Aloud</span>
-                </label>
+    <!-- Header -->
+    <header class="flex items-center justify-between px-6 py-3 border-b border-slate-700 bg-slate-800 shrink-0 h-14">
+        <div>
+            <h1 class="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
+                Local LLM Literature Reviewer
+            </h1>
+            <p class="text-xs text-slate-400 hidden sm:block">100% Privacy • WebGPU • RAG</p>
+        </div>
+        <div class="flex items-center gap-4 text-sm">
+            <label class="flex items-center gap-2 cursor-pointer text-slate-400 hover:text-slate-200 transition">
+                <input type="checkbox" id="tts-toggle"
+                    class="w-4 h-4 rounded border-slate-600 text-blue-500 focus:ring-blue-500 bg-slate-700">
+                <span>🔊 Read Aloud</span>
+            </label>
+        </div>
+    </header>
+
+    <main class="flex-1 flex flex-col md:flex-row overflow-hidden">
+
+        <!-- LEFT: Chat Interface -->
+        <section class="flex-1 flex flex-col min-w-0 bg-slate-900 relative">
+
+            <!-- Chat Box (Now Thread View) -->
+            <div class="flex-1 overflow-y-auto flex flex-col scroll-smooth" id="chat-box">
+                <!-- System Init Message -->
+                <div class="message-row system bg-slate-800/20 border-b border-slate-800">
+                    <div class="avatar system">⚙️</div>
+                    <div class="message-content text-sm text-slate-400 pt-1">
+                        System initializing... Waiting for WebLLM.
+                    </div>
+                </div>
             </div>
-        </header>
 
-        <main class="main-layout">
-            <!-- MAIN: Chat Interface (Left) -->
-            <section class="chat-interface">
-                <div class="chat-container">
-                    <div id="chat-box" class="chat-box">
-                        <div class="message system">
-                            <div class="bubble">System initializing... Waiting for WebLLM.</div>
+            <!-- Input Area -->
+            <div class="p-4 border-t border-slate-800 bg-slate-900 shrink-0 max-w-4xl w-full mx-auto">
+                <!-- Status Bar -->
+                <div class="flex justify-between items-center text-xs text-slate-400 mb-2 px-1" id="status-bar">
+                    <span id="status-text">Ready to initialize</span>
+                    <div class="w-32 h-1.5 bg-slate-700 rounded-full overflow-hidden hidden progress-bar-container">
+                        <div id="progress-bar" class="h-full bg-blue-500 w-0 transition-all duration-300"></div>
+                    </div>
+                </div>
+
+                <div class="flex gap-3">
+                    <button id="mic-btn"
+                        class="p-3 rounded-xl bg-slate-800 border border-slate-700 hover:bg-slate-700 transition text-xl flex items-center justify-center min-w-[3rem]"
+                        title="Speak">
+                        🎤
+                    </button>
+                    <input type="text" id="user-input"
+                        class="flex-1 bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-slate-100 placeholder-slate-500 focus:border-blue-500 focus:outline-none transition"
+                        placeholder="Ask a question about your documents..." disabled>
+                    <button id="send-btn"
+                        class="px-6 py-2 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-xl transition disabled:opacity-50 disabled:cursor-not-allowed"
+                        disabled>
+                        →
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- RIGHT: Sidebar (Settings & Files) -->
+        <aside class="w-full md:w-80 bg-slate-800/50 border-l border-slate-700 flex flex-col shrink-0">
+
+            <div class="p-4 flex-1 overflow-y-auto flex flex-col gap-6">
+                <!-- Drop Zone -->
+                <div id="drop-zone"
+                    class="border-2 border-dashed border-slate-600 rounded-xl p-6 text-center hover:border-blue-500 hover:bg-blue-500/5 cursor-pointer transition group">
+                    <p class="text-slate-400 group-hover:text-blue-400 text-sm font-medium">📄 Drag & Drop Research
+                        Paper (PDF)</p>
+                    <input type="file" id="file-input" accept="application/pdf" class="hidden">
+                    <div id="document-status" class="mt-2 text-xs text-blue-400"></div>
+                </div>
+
+                <!-- Memory Bank -->
+                <div>
+                    <h3
+                        class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 border-b border-slate-700 pb-2">
+                        🧠 Memory Bank</h3>
+
+                    <!-- Context Dropdown -->
+                    <div class="mb-4">
+                        <label class="text-[10px] text-slate-500 block mb-1">Active Context</label>
+                        <select id="context-select"
+                            class="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200 focus:border-blue-500 outline-none transition cursor-pointer">
+                            <option value="global">🌐 Global Context</option>
+                        </select>
+                    </div>
+
+                    <div class="flex gap-2 mb-4">
+                        <div class="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-2 text-center">
+                            <span class="block text-lg font-bold text-blue-400" id="total-docs">0</span>
+                            <span class="block text-[10px] text-slate-500 uppercase">Files</span>
+                        </div>
+                        <div class="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-2 text-center">
+                            <span class="block text-lg font-bold text-blue-400" id="total-chunks">0</span>
+                            <span class="block text-[10px] text-slate-500 uppercase">Chunks</span>
                         </div>
                     </div>
 
-                    <div class="input-area">
-                        <button id="mic-btn" class="icon-btn" title="Speak">🎤</button>
-                        <input type="text" id="user-input" placeholder="Ask a question about your documents..."
-                            disabled>
-                        <button id="send-btn" disabled>→</button>
-                    </div>
+                    <ul id="file-list" class="flex flex-col gap-1 max-h-40 overflow-y-auto">
+                        <!-- File items will be injected here -->
+                    </ul>
                 </div>
 
-                <!-- Status / Progress (Inside Chat Column) -->
-                <div id="status-bar" class="status-bar">
-                    <span id="status-text">Ready to initialize</span>
-                    <div class="progress-bar-container hidden">
-                        <div id="progress-bar" class="progress-bar"></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- SIDEBAR: Settings & Files (Right) -->
-            <aside class="sidebar">
-                <!-- Drop Zone -->
-                <div id="drop-zone" class="drop-zone">
-                    <p>📄 Drag & Drop Research Paper (PDF)</p>
-                    <input type="file" id="file-input" accept="application/pdf" style="display: none;">
-                    <div id="document-status" class="doc-status"></div>
-                </div>
-
-                <!-- Controls & Settings -->
-                <div class="controls-container">
-                    <details class="settings-panel" open>
-                        <summary>⚙️ System Settings</summary>
-                        <div class="settings-content">
-                            <label>
-                                <span>System Prompt:</span>
-                                <textarea id="system-prompt"
-                                    rows="5">You are a helpful academic assistant. Answer questions concisely based on the context provided.</textarea>
+                <!-- Settings -->
+                <div class="border border-slate-700 rounded-lg bg-slate-800 overflow-hidden">
+                    <details class="group p-2" open>
+                        <summary
+                            class="flex justify-between items-center font-medium cursor-pointer list-none text-sm text-slate-300 hover:text-white">
+                            <span>⚙️ System Settings</span>
+                            <span class="transition group-open:rotate-180">▼</span>
+                        </summary>
+                        <div class="pt-3 mt-2 border-t border-slate-700 flex flex-col gap-4 text-sm">
+                            <label class="flex flex-col gap-1">
+                                <span class="text-slate-400 text-xs">AI Model</span>
+                                <select id="model-selector"
+                                    class="bg-slate-900 border border-slate-700 rounded p-2 text-slate-200 outline-none focus:border-blue-500">
+                                    <option value="Llama-3.2-3B-Instruct-q4f16_1-MLC" selected>Llama 3.2 3B (Balanced)
+                                    </option>
+                                    <option value="Llama-3.2-1B-Instruct-q4f16_1-MLC">Llama 3.2 1B (Fast)</option>
+                                    <option value="Llama-3-8B-Instruct-q4f32_1-MLC">Llama 3 8B (High Quality)</option>
+                                </select>
                             </label>
-                            <label>
-                                <span>Temperature: <span id="temp-value">0.7</span></span>
-                                <input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7">
+
+                            <label class="flex flex-col gap-1">
+                                <span class="text-slate-400 text-xs">Persona</span>
+                                <select id="persona-select"
+                                    class="bg-slate-900 border border-slate-700 rounded p-2 text-slate-200 outline-none focus:border-blue-500 text-xs text-sm">
+                                    <option value="scholar">🎓 The Scholar (Default)</option>
+                                    <option value="simplifier">💡 The Simplifier (ELI5)</option>
+                                    <option value="critic">🕵️ The Critic</option>
+                                </select>
+                            </label>
+
+                            <label class="flex flex-col gap-1">
+                                <span class="text-slate-400 text-xs">System Prompt</span>
+                                <textarea id="system-prompt" rows="4"
+                                    class="bg-slate-900 border border-slate-700 rounded p-2 text-slate-200 outline-none focus:border-blue-500 text-xs resize-y">You are an expert academic researcher.
+When asked to review literature:
+1. SYNTHESIZE themes across papers (e.g. "Paper A argues X, while Paper B suggests Y").
+2. Use a structured format: Introduction, Comparison of Approaches, Conclusion.
+3. Be specific and cite your sources.</textarea>
+                            </label>
+
+                            <label class="flex flex-col gap-1">
+                                <div class="flex justify-between">
+                                    <span class="text-slate-400 text-xs">Temperature</span>
+                                    <span id="temp-value" class="text-slate-400 text-xs">0.7</span>
+                                </div>
+                                <input type="range" id="temp-slider" min="0" max="1" step="0.1" value="0.7"
+                                    class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer">
                             </label>
                         </div>
                     </details>
                 </div>
-            </aside>
-        </main>
-    </div>
+            </div>
+        </aside>
+    </main>
 
-    <!-- Modules are loaded here in later steps -->
+    <!-- Modules -->
     <script type="module" src="main.js"></script>
-</body>
+    <script>
+        // Additional Helper to ensure new dynamic elements use Tailwind classes
+        // The main.js creates elements with classNames like 'bubble', 'message user', etc.
+        // We can either update main.js to use full tailwind strings or just map them via CSS (but we want to avoid style.css)
+        // OR we can add a small utility style block in head or use the tailwind @apply feature? 
+        // Since we are using CDN, @apply isn't easily available without a build step.
+        // STRATEGY: We will add a small <style> block in the head to map the legacy classes used in JS to Tailwind-like visuals.
+        // OR better: Update main.js to add Tailwind classes?
+        // Let's update the main.js file to inject Tailwind classes instead of 'bubble' etc.
+        // Actually, main.js is complex to refactor ALL class references. 
+        // EASIEST PATH: Keep the class names in JS, but define them in the <style> block using @apply or just raw CSS that matches Tailwind theme.
+        // WAIT, I promised to "Remove dependency on style.css".
+        // Use the <style> block in head for the dynamic JS classes (message, bubble, etc) is acceptable as "Internal CSS" but valid. 
+        // BETTER: I will assume I can update main.js class assignments in the next step or keep a minimal style block.
+        // Let's add the minimal style block for the dynamic parts (chat bubbles) in the HTML head.
+    </style >
+            <style>
+        /* Dynamic Chat Bubble Styles Mapping */
 
-</html>
+                /* Since we can't use @apply in CDN easily without postcss, we write raw CSS mimicking the Tailwind look for these dynamic JS elements */
+                .message {
+                    display: flex;
+                margin-bottom: 0.5rem;
+                animation: fadeIn 0.3s forwards;
+        }
+                .message.user {justify - content: flex-end; }
+                .message.bot {justify - content: flex-start; }
+                .message.system {justify - content: center; margin: 1rem 0; font-size: 0.75rem; color: #94a3b8; }
+
+                .bubble {
+                    padding: 0.75rem 1rem;
+                border-radius: 1rem;
+                max-width: 85%;
+                font-size: 0.95rem;
+                line-height: 1.5;
+                word-wrap: break-word;
+                box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+                .message.user .bubble {
+                    background - color: #3b82f6; /* blue-500 */
+                color: white;
+                border-bottom-right-radius: 0.25rem;
+        }
+                .message.bot .bubble {
+                    background - color: #334155; /* slate-700 */
+                color: #f1f5f9; /* slate-100 */
+                border-bottom-left-radius: 0.25rem;
+        }
+                .message.system .bubble {
+                    background: transparent;
+                border: 1px solid #334155;
+                padding: 0.25rem 0.75rem;
+                border-radius: 0.5rem;
+        }
+
+                .citation {
+                    display: inline-block;
+                font-size: 0.75rem;
+                background-color: rgba(59, 130, 246, 0.1);
+                color: #60a5fa;
+                padding: 0.1rem 0.4rem;
+                border-radius: 0.25rem;
+                margin-right: 0.25rem;
+                margin-top: 0.5rem;
+                border: 1px solid rgba(59, 130, 246, 0.3);
+        }
+
+                .active {
+                    background - color: rgba(59, 130, 246, 0.15); /* blue-500/15 */
+                border-color: #3b82f6 !important;
+                color: white !important;
+        }
+
+                /* File Item */
+                .file-item {
+                    padding: 0.5rem;
+                background: rgba(255,255,255,0.03);
+                border-radius: 0.375rem;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                color: #cbd5e1;
+                cursor: pointer;
+                transition: all 0.2s ease;
+                border: 1px solid transparent;
+                font-size: 0.85rem;
+                position: relative; /* For potential markers */
+        }
+                .file-item:hover {
+                    background: rgba(255,255,255,0.08);
+                border-color: rgba(96, 165, 250, 0.4); /* Blue hint */
+                transform: translateX(2px); /* Slight motion nudge */
+        }
+                .file-item.active {
+                    background - color: rgba(59, 130, 246, 0.15); /* blue-500/15 */
+                border-color: #3b82f6 !important;
+                color: white !important;
+                box-shadow: 0 0 10px rgba(59, 130, 246, 0.1);
+        }
+                /* Add a tiny indicator to show it's clickable/active */
+                .file-item.active::before {
+                    content: '';
+                position: absolute;
+                left: 0;
+                top: 10%;
+                bottom: 10%;
+                width: 3px;
+                background-color: #3b82f6;
+                border-radius: 0 2px 2px 0;
+        }
+                @keyframes fadeIn {to {opacity: 1; } }
+            </style>
+</body >
+</html >

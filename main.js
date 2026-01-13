@@ -4,7 +4,7 @@ import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17
 /****************************************************************************
  * CONFIGURATION
  ****************************************************************************/
-const SELECTED_MODEL = "Llama-3-8B-Instruct-q4f32_1-MLC";
+
 const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
 
 // DOM Elements
@@ -23,13 +23,27 @@ const dom = {
     tempSlider: document.getElementById('temp-slider'),
     tempValue: document.getElementById('temp-value'),
     docStatus: document.getElementById('document-status'),
-    micBtn: document.getElementById('mic-btn')
+    micBtn: document.getElementById('mic-btn'),
+    memFileCount: document.getElementById('total-docs'),
+    memChunkCount: document.getElementById('total-chunks'),
+    fileList: document.getElementById('file-list'),
+    contextSelect: document.getElementById('context-select'), // NEW
+    personaSelect: document.getElementById('persona-select'), // NEW
+    modelSelector: document.getElementById('model-selector')
 };
 
 let engine = null;
 let extractor = null; // Transformers.js pipeline
 let transcriber = null; // Whisper pipeline
-let vectorStore = []; // To store chunks { id, text, vector }
+let vectorStore = []; // To store chunks { id, text, vector, source }
+let loadedFiles = new Set(); // Track loaded filenames
+let activeDocument = null; // Filter for RAG
+let chatSessions = { "global": [] }; // { sessionId: [ {role, content, type} ] }
+let activeSessionId = "global";
+
+// Initialize conversation history if not exists (though we rely on chatSessions source of truth mainly)
+// We will reconstruct the messages array for the LLM from chatSessions each turn.
+
 const synth = window.speechSynthesis;
 let isRecording = false;
 let mediaRecorder = null;
@@ -41,7 +55,8 @@ let audioChunks = [];
 
 
 async function initializeEngine() {
-    updateStatus("Initializing WebLLM...", 0);
+    const modelId = dom.modelSelector.value;
+    updateStatus(`Initializing ${modelId}...`, 0);
 
     const initProgressCallback = (report) => {
         const label = report.text || report;
@@ -50,19 +65,21 @@ async function initializeEngine() {
 
     try {
         // Load WebLLM
-        updateStatus("Loading Chat Model (WebLLM)...", 0.01);
+        updateStatus(`Loading Chat Model (${modelId})...`, 0.01);
         engine = await webllm.CreateMLCEngine(
-            SELECTED_MODEL,
+            modelId,
             { initProgressCallback: initProgressCallback }
         );
 
-        // Load Transformers.js Embedding Model
-        updateStatus("Loading Embedding Model (Transformers.js)...", 0.5);
-        extractor = await pipeline('feature-extraction', EMBEDDING_MODEL);
+        // Load Transformers.js Embedding Model (only once)
+        if (!extractor) {
+            updateStatus("Loading Embedding Model (Transformers.js)...", 0.5);
+            extractor = await pipeline('feature-extraction', EMBEDDING_MODEL);
+        }
 
-        updateStatus("Ready to chat!", 1);
+        updateStatus(`Ready to chat! (${modelId})`, 1);
         enableInput(true);
-        addSystemMessage("Model & Embedder loaded. Ready!");
+        addSystemMessage(`Model loaded: ${modelId}`);
 
     } catch (err) {
         console.error("Initialization error:", err);
@@ -71,12 +88,27 @@ async function initializeEngine() {
     }
 }
 
+async function reloadEngine() {
+    if (engine) {
+        // webllm engine doesn't have an explicit 'unload' that we strictly need to call if we just overwrite, 
+        // but let's be safe and just re-initialize.
+        // engine.unload(); // If supported in future
+        engine = null;
+    }
+    await initializeEngine();
+}
+
 /****************************************************************************
  * PDF HANDLING & CHUNKING
  ****************************************************************************/
 async function handleFile(file) {
     if (file.type !== 'application/pdf') {
         alert("Please upload a PDF file.");
+        return;
+    }
+
+    if (loadedFiles.has(file.name)) {
+        addSystemMessage(`File "${file.name}" is already loaded.`);
         return;
     }
 
@@ -90,25 +122,28 @@ async function handleFile(file) {
         // Chunking
         const chunks = chunkText(text, 500, 50); // 500 chars, 50 overlap
 
-        // Store chunks
-        vectorStore = chunks.map((chunk, index) => ({
-            id: index,
+        // Create temporary store for this file
+        const newChunks = chunks.map((chunk, index) => ({
+            id: `${file.name}-${index}`,
             text: chunk,
             vector: null,
             source: file.name
         }));
 
-        dom.docStatus.textContent = `File Loaded: ${file.name} (${chunks.length} chunks)`;
-
-
-        addSystemMessage(`Created ${chunks.length} chunks. Generating Embeddings...`);
         updateStatus("Generating Embeddings...", 0.2);
 
-        // Generate Embeddings
-        await embedChunks();
+        // Generate Embeddings for NEW chunks
+        await embedChunks(newChunks);
 
-        console.log("Vector Store:", vectorStore);
-        addSystemMessage(`Embeddings generated for ${vectorStore.length} chunks. RAG Ready.`);
+        // Add to Global Store
+        vectorStore.push(...newChunks);
+        loadedFiles.add(file.name);
+
+        // Update UI
+        updateMemoryUI();
+
+        dom.docStatus.textContent = `Added: ${file.name} (+${newChunks.length} chunks)`;
+        addSystemMessage(`Embeddings generated for ${newChunks.length} chunks. Added to Memory Bank.`);
         updateStatus("Ready to chat!", 1);
 
     } catch (err) {
@@ -118,15 +153,15 @@ async function handleFile(file) {
     }
 }
 
-async function embedChunks() {
+async function embedChunks(chunksToEmbed) {
     if (!extractor) {
         addSystemMessage("Embedding model not loaded yet.");
         return;
     }
 
-    const total = vectorStore.length;
+    const total = chunksToEmbed.length;
     for (let i = 0; i < total; i++) {
-        const chunk = vectorStore[i];
+        const chunk = chunksToEmbed[i];
         const output = await extractor(chunk.text, { pooling: 'mean', normalize: true });
         chunk.vector = Array.from(output.data);
 
@@ -134,6 +169,101 @@ async function embedChunks() {
             updateStatus(`Embedding Chunks (${i + 1}/${total})...`, (i + 1) / total);
         }
     }
+}
+
+function updateMemoryUI() {
+    dom.memFileCount.textContent = loadedFiles.size;
+    dom.memChunkCount.textContent = vectorStore.length;
+
+    // 1. Refresh Dropdown (Primary Control)
+    // Save current selection (if valid)
+    const currentVal = activeDocument === null ? "global" : activeDocument;
+
+    dom.contextSelect.innerHTML = '<option value="global">🌐 Global Context (All Files)</option>';
+
+    loadedFiles.forEach(filename => {
+        const option = document.createElement('option');
+        option.value = filename;
+        option.textContent = `📄 ${filename}`;
+        dom.contextSelect.appendChild(option);
+    });
+
+    // Restore selection
+    dom.contextSelect.value = currentVal;
+
+
+    // 2. Rebuild File List (Informational View)
+    dom.fileList.innerHTML = '';
+
+    loadedFiles.forEach(filename => {
+        const count = vectorStore.filter(c => c.source === filename).length;
+        const li = document.createElement('li');
+        // Visual highlight sync
+        const isActive = activeDocument === filename;
+        li.className = `file-item ${isActive ? 'active' : ''} cursor-default`; // reduce pointer if only info
+
+        // Let's keep click-to-switch on list item too as a convenience? 
+        // User requested "Dropdown", but standard behavior allows both. 
+        // Let's Sync them. Click list -> Update Dropdown. Change Dropdown -> Update List highlight.
+
+        li.innerHTML = `
+            <span class="truncate">${escapeHtml(filename)}</span>
+            <span class="badge text-[10px] bg-slate-700 px-1 rounded">${count} chunks</span>
+        `;
+
+        li.addEventListener('click', () => {
+            // Sync Dropdown
+            dom.contextSelect.value = filename;
+            changeContext(filename);
+        });
+
+        dom.fileList.appendChild(li);
+    });
+}
+
+function changeContext(value) {
+    if (value === "global") {
+        if (activeDocument !== null) {
+            activeDocument = null;
+            switchSession("global");
+            addSystemMessage("Switched to Global Context.", false); // false = Ephemeral (don't save)
+            updateMemoryUI(); // to highlight list
+        }
+    } else {
+        if (activeDocument !== value) {
+            activeDocument = value;
+            if (!chatSessions[value]) chatSessions[value] = [];
+            switchSession(value);
+            addSystemMessage(`Switched context to: ${value}`, false); // false = Ephemeral (don't save)
+            updateMemoryUI(); // to highlight list
+        }
+    }
+}
+
+function switchSession(sessionId) {
+    activeSessionId = sessionId;
+
+    // Clear UI
+    dom.chatBox.innerHTML = '';
+
+    // Re-render history
+    const history = chatSessions[sessionId] || [];
+    history.forEach(msg => {
+        // FILTER: Don't show old "Switched..." messages
+        if (msg.role === 'system' && (msg.content.startsWith("Switched") || msg.content.startsWith("Switching"))) {
+            return;
+        }
+
+        if (msg.role === 'user') {
+            addUserMessage(msg.content, false); // false = don't save again
+        } else if (msg.role === 'assistant') {
+            addBotMessage(msg.content, false); // false = don't save again
+        } else if (msg.role === 'system') {
+            addSystemMessage(msg.content, false);
+        }
+    });
+
+    dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
 }
 
 async function extractTextFromPDF(file) {
@@ -258,9 +388,12 @@ async function handleUserMessage() {
     const text = dom.userInput.value.trim();
     if (!text || !engine) return;
 
-    addUserMessage(text);
+    addUserMessage(text, true); // true = save to session
     dom.userInput.value = "";
     enableInput(false);
+
+    // CAPTURE SESSION ID: Ensure we save to the session where the request started
+    const targetSessionId = activeSessionId;
 
     try {
         let systemPrompt = dom.systemPrompt.value;
@@ -269,21 +402,26 @@ async function handleUserMessage() {
 
         // RAG STEP: If we have documents, find relevant chunks
         if (vectorStore.length > 0 && extractor) {
-            addSystemMessage("Searching documents...");
+            // addSystemMessage("Searching documents..."); // Optional: too noisy for history?
 
             // 1. Embed Query
             const output = await extractor(text, { pooling: 'mean', normalize: true });
             const queryVector = Array.from(output.data);
 
+            // RAG FILTER: Active Document
+            const searchPool = activeDocument
+                ? vectorStore.filter(chunk => chunk.source === activeDocument)
+                : vectorStore;
+
             // 2. Cosine Similarity Search
-            const similarities = vectorStore.map(chunk => ({
+            const similarities = searchPool.map(chunk => ({
                 ...chunk,
                 score: cosineSimilarity(queryVector, chunk.vector)
             }));
 
             // 3. Sort & Top-K
             similarities.sort((a, b) => b.score - a.score);
-            topK = similarities.slice(0, 3); // Top 3 chunks
+            topK = similarities.slice(0, 10); // Top 10 chunks (Better context for 6 papers)
 
             // 4. Construct Context
             relevantContext = topK.map(chunk => `[Context]: ${chunk.text}`).join("\n\n");
@@ -293,34 +431,56 @@ async function handleUserMessage() {
         }
 
         // WebLLM logic
-        if (!window.conversationHistory) {
-            window.conversationHistory = [];
-        }
 
-        // We rebuild messages every time to ensure System Prompt includes latest RAG context if needed,
-        // BUT WebLLM session handling usually appends. 
-        // Strategy: Just append the user message, but if we did RAG, we might prepend context to the USER message 
-        // OR update the system prompt. Llama-3 handles system prompts well.
-        // Let's UPDATE the system prompt for THIS turn? Hard with simple history array.
-        // Best approach for single-turn RAG chat: 
-        // Send: System (with context) + User Query.
+        // 1. Construct System Message
+        // We do strictly one system message at the start.
+        // If we have RAG context, we can append it to the Request or the System Prompt.
+        // Best practice for "Chat with Doc": System Prompt + "Context: ... "
 
-        // For multi-turn, we'll just inject context into the User message for simplicity and effectiveness.
-        // "Context: ... \n\n Question: ..."
+        let finalSystemPrompt = systemPrompt; // Value from DOM already includes RAG Context appended in previous lines (lines 391) -> wait, logic check below.
 
-        const finalUserMessage = relevantContext
-            ? `Context:\n${relevantContext}\n\nQuestion: ${text}`
-            : text;
+        // Logic correction: Lines 360-392 modify a local variable 'systemPrompt'. Perfect.
+
+        // 2. Construct Conversation History
+        // We take the current session's history EXCLUDING the latest user message we just added? 
+        // Actually, 'chatSessions[activeSessionId]' already has the user message? 
+        // Let's check: addUserMessage(text, true) -> pushed to chatSessions.
+
+        // So we need to map chatSessions to WebLLM format.
+        // filter out 'system' messages from history because we are constructing a fresh MAIN system message.
+        // (Unless we want to keep previous system messages? Usually no, we want the LATEST config).
+
+        const currentSessionMessages = chatSessions[activeSessionId] || [];
+
+        const historyForModel = currentSessionMessages
+            .filter(msg => msg.role !== 'system') // We provide a fresh system prompt each turn
+            .map(msg => ({ role: msg.role, content: msg.content }));
+
+        // The latest user message is ALREADY in historyForModel because we called addUserMessage(text, true) at line 355.
+        // Wait, if we use historyForModel, does it include the context?
+        // We decided in the plan: "Inject context into the User message" OR "System Prompt".
+        // Line 410 says: "finalUserMessage = ... relevantContext ...". 
+        // But logic at 355 saved the RAW text.
+
+        // OPTION A: Modifying the last user message in the array to include context (Invisible to UI, visible to LLM).
+        // OPTION B: Putting it in System Prompt.
+
+        // Let's go with OPTION A (Context in User Message) for stronger attention, OR System Prompt. 
+        // The previous code 391 appended to systemPrompt. Let's stick to that for "Lit Reviewer" style.
+        // "System: You are a researcher... Context: ... "
 
         const messages = [
-            { role: "system", content: "You are a helpful academic assistant." },
-            ...window.conversationHistory, // Past history
-            { role: "user", content: finalUserMessage }
+            { role: "system", content: finalSystemPrompt },
+            ...historyForModel
         ];
+
+        // NOTE: If the user just sent a message, it is the LAST item in historyForModel.
+        // If we want to attach context specifically to that message, we could. 
+        // But effectively, System Prompt context works well for "Answer based on this data".
 
         // Stream response
         const botMessageId = addBotMessage("");
-        const botBubble = document.getElementById(botMessageId).querySelector('.bubble');
+        const botContentDiv = document.getElementById(botMessageId).querySelector('.message-content');
 
         const chunks = await engine.chat.completions.create({
             messages,
@@ -333,27 +493,26 @@ async function handleUserMessage() {
         for await (const chunk of chunks) {
             const delta = chunk.choices[0]?.delta?.content || "";
             fullReply += delta;
-            botBubble.textContent = fullReply;
+            // Markdown Render on the fly (might be heavy but okay for decent machines)
+            botContentDiv.innerHTML = marked.parse(fullReply);
             dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
         }
 
         // Generate Citations Badge
         if (relevantContext) {
             const uniqueSources = [...new Set(topK.map(k => k.source))];
-            const sourcesHtml = uniqueSources.map(s => `<span class="citation">source: ${s}</span>`).join('');
+            const sourcesHtml = uniqueSources.map(s => `<span class="citation-badge">source: ${s}</span>`).join('');
             const citationDiv = document.createElement('div');
             citationDiv.innerHTML = sourcesHtml;
-            // Append badges to the LAST bot message (which is the one we just filled)
-            dom.chatBox.lastElementChild.appendChild(citationDiv);
+            // Append badges to contents
+            botContentDiv.appendChild(citationDiv);
             dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
         }
 
-        // Update history (We store the ORIGINAL user text to keep history clean/readable, 
-        // or the RAG version? Storing original is better for UI, but model needs context.
-        // Let's store original text but the model saw the hidden context.)
-        // Actually, simple way: Store what we sent.
-        window.conversationHistory.push({ role: "user", content: finalUserMessage });
-        window.conversationHistory.push({ role: "assistant", content: fullReply });
+        // Save Bot Message to Session (Targeted)
+        // We use targetSessionId to ensure it goes to the correct history even if user switched away
+        if (!chatSessions[targetSessionId]) chatSessions[targetSessionId] = [];
+        chatSessions[targetSessionId].push({ role: "assistant", content: fullReply });
 
         // Bonus: TTS
         if (dom.ttsToggle.checked) {
@@ -403,30 +562,62 @@ function enableInput(enabled) {
     if (enabled) setTimeout(() => dom.userInput.focus(), 100);
 }
 
-function addSystemMessage(text) {
+function addSystemMessage(text, save = true) {
     const div = document.createElement('div');
-    div.className = 'message system';
-    div.innerHTML = `<div class="bubble">${text}</div>`;
+    div.className = 'message-row system bg-slate-800/20 border-b border-slate-800';
+    div.innerHTML = `
+        <div class="avatar system">⚙️</div>
+        <div class="message-content text-sm text-slate-400 pt-1">
+            ${escapeHtml(text)}
+        </div>
+    `;
     dom.chatBox.appendChild(div);
     dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
+
+    if (save) {
+        if (!chatSessions[activeSessionId]) chatSessions[activeSessionId] = [];
+        chatSessions[activeSessionId].push({ role: "system", content: text });
+    }
 }
 
-function addUserMessage(text) {
+function addUserMessage(text, save = true) {
     const div = document.createElement('div');
-    div.className = 'message user';
-    div.innerHTML = `<div class="bubble">${escapeHtml(text)}</div>`;
+    div.className = 'message-row user';
+    // User message is plain text usually, or we can use marked too if we want user markdown support. 
+    // Let's stick to escapeHtml for user input to be safe/simple, or marked if they paste code.
+    // Let's use simple text for user to mimic "Input".
+    div.innerHTML = `
+        <div class="avatar user">👤</div>
+        <div class="message-content">
+            ${escapeHtml(text)}
+        </div>
+    `;
     dom.chatBox.appendChild(div);
     dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
+
+    if (save) {
+        if (!chatSessions[activeSessionId]) chatSessions[activeSessionId] = [];
+        chatSessions[activeSessionId].push({ role: "user", content: text });
+    }
 }
 
-function addBotMessage(initialText) {
+function addBotMessage(initialText, save = true) {
     const id = "bot-msg-" + Date.now();
     const div = document.createElement('div');
     div.id = id;
-    div.className = 'message bot';
-    div.innerHTML = `<div class="bubble">${escapeHtml(initialText)}</div>`;
+    div.className = 'message-row bot';
+    // Bot message content will be updated via streaming
+    div.innerHTML = `
+        <div class="avatar bot">🤖</div>
+        <div class="message-content">
+            ${marked.parse(initialText)}
+        </div>
+    `;
     dom.chatBox.appendChild(div);
     dom.chatBox.scrollTop = dom.chatBox.scrollHeight;
+
+    // Note: Bot messages are streamed, so we usually save them AFTER completion in handleUserMessage
+    // But if we are just re-rendering (save=false), we present it immediately.
     return id;
 }
 
@@ -477,6 +668,44 @@ dom.tempSlider.addEventListener('input', (e) => {
     dom.tempValue.textContent = e.target.value;
 });
 dom.micBtn.addEventListener('click', toggleRecording);
+dom.modelSelector.addEventListener('change', reloadEngine);
+dom.contextSelect.addEventListener('change', (e) => {
+    changeContext(e.target.value);
+});
+
+// --- PERSONA SELECTOR ---
+const PERSONAS = {
+    scholar: `You are an expert academic researcher.
+When asked to review literature:
+1. SYNTHESIZE themes across papers (e.g. "Paper A argues X, while Paper B suggests Y").
+2. Use a structured format: Introduction, Comparison of Approaches, Conclusion.
+3. Be specific and cite your sources.`,
+
+    simplifier: `You are a skilled teacher who explains complex concepts simply (ELI5).
+1. Use analogies and everyday language.
+2. Avoid jargon or explain it if necessary.
+3. Use bullet points for clarity.`,
+
+    critic: `You are a critical academic reviewer.
+1. Focus on identifying methodology flaws, limitations, and contradictions.
+2. Challenge the authors' assumptions.
+3. Point out what is missing or under-explored in the research.`
+};
+
+if (dom.personaSelect) {
+    dom.personaSelect.addEventListener('change', (e) => {
+        console.log("Persona changed to:", e.target.value);
+        const p = PERSONAS[e.target.value];
+        if (p) {
+            dom.systemPrompt.value = p;
+        }
+    });
+} else {
+    console.error("Persona selector not found in DOM");
+}
+
+// Initialize (Auto-load Scholar)
+// Optional: if (dom.systemPrompt.value === "") dom.systemPrompt.value = PERSONAS.scholar;
 
 // Start
 window.addEventListener('DOMContentLoaded', () => {
