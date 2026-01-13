@@ -89,12 +89,16 @@ async function initializeEngine() {
 }
 
 async function reloadEngine() {
+    console.log("Switching Model...");
     if (engine) {
-        // webllm engine doesn't have an explicit 'unload' that we strictly need to call if we just overwrite, 
-        // but let's be safe and just re-initialize.
-        // engine.unload(); // If supported in future
+        // Explicitly unload to free WebGPU memory
+        if (typeof engine.unload === 'function') {
+            await engine.unload();
+        }
         engine = null;
     }
+    // Clear status to give visual cue
+    updateStatus("Switching models...", 0);
     await initializeEngine();
 }
 
