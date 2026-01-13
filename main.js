@@ -97,8 +97,9 @@ async function reloadEngine() {
         }
         engine = null;
     }
-    // Clear status to give visual cue
+    // Clear status to give visual cue (and waiting a bit to make it visible)
     updateStatus("Switching models...", 0);
+    await new Promise(r => setTimeout(r, 500));
     await initializeEngine();
 }
 
